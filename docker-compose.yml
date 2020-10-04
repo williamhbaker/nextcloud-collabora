@@ -1,0 +1,86 @@
+version: '3'
+
+services:
+
+  traefik:
+    image: "traefik:latest"
+    container_name: "traefik"
+    restart: always
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_MAIL}"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "certs:/letsencrypt"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+  db:
+    image: postgres:alpine
+    container_name: "nextcloud-postgres"
+    restart: always
+    volumes:
+      - db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+
+  nextcloud:
+    image: nextcloud:latest
+    container_name: "nextcloud"
+    restart: always
+    volumes:
+      - nextcloud:/var/www/html
+      - ./data:/var/www/html/data
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+    depends_on:
+      - db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nextcloud.rule=Host(`${NC_HOST}`)"
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.tls.certresolver=myresolver"
+      - "traefik.http.middlewares.nextcloud.headers.customresponseheaders.Strict-Transport-Security=max-age=15552000; includeSubDomains"
+
+  collabora:
+    image: collabora/code:latest
+    container_name: "collabora"
+    restart: always
+    environment:
+      - domain=${COLLABORA_ESCAPED_DOMAIN}
+      - DONT_GEN_SSL_CERT=YES 
+      - extra_params=--o:ssl.enable=false --o:ssl.termination=true
+    cap_add:
+      - MKNOD
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.collabora.rule=Host(`${COLLABORA_HOST}`)"
+      - "traefik.http.routers.collabora.entrypoints=websecure"
+      - "traefik.http.routers.collabora.tls.certresolver=myresolver"
+
+  duckdns:
+    image: linuxserver/duckdns
+    container_name: "duckdns"
+    restart: always
+    environment:
+      - TZ=America/Detroit
+      - SUBDOMAINS=${DUCKDNS_SUBDOMAINS}
+      - TOKEN=${DUCKDNS_TOKEN}
+
+volumes:
+  db:
+  nextcloud:
+  certs:
